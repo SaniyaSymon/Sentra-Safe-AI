@@ -1,0 +1,97 @@
+{
+  "project_name": "SentraSafe AI",
+  "theme": "Light theme strictly. White-first interface, orange primary accent, slate text. Do NOT make it dark-theme-first. Main feel must remain light, clean, premium, operational, and emergency-ready.",
+  "typography": {
+    "headings": {
+      "family": "Cabinet Grotesk",
+      "fallback": "Outfit, sans-serif",
+      "usage": "Hero headers, big SOS numbers, major dashboard titles. Do NOT use Inter or Roboto."
+    },
+    "body": {
+      "family": "IBM Plex Sans",
+      "fallback": "Manrope, sans-serif",
+      "usage": "Data tables, queues, maps, input fields, body text. Distinct 1/l/I characters for high public-safety legibility."
+    }
+  },
+  "colors": {
+    "background": {
+      "base": "#FFFFFF",
+      "surface": "#F8FAFC",
+      "glass": "rgba(255, 255, 255, 0.7)"
+    },
+    "brand": {
+      "navy_primary": "#0F172A",
+      "teal_accent": "#0D9488",
+      "orange_action": "#FF5A1F"
+    },
+    "status": {
+      "danger": "#E11D48",
+      "safe_synced": "#10B981",
+      "warning": "#F59E0B"
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#475569",
+      "muted": "#94A3B8"
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": "Use 'backdrop-blur-xl bg-white/70' with a 1px solid 'border-slate-200' for premium floating panels over maps. Do NOT use muddy gray transparency.",
+    "background_patterns": "Use topographic/radar subtle SVG background patterns with 'opacity-5' on pure white containers to break up blank space.",
+    "borders_and_shadows": "Use 1px 'border-slate-200' to structure the grid. Shadows should be soft, diffuse ambient shadows like 'shadow-sm' or 'shadow-[0_8px_32px_rgba(0,0,0,0.04)]'."
+  },
+  "layouts": {
+    "citizen_portal": {
+      "pattern": "Bento Grid Mobile-First",
+      "details": "Generous touch targets ('p-6' to 'p-8'). Big map hero taking up 50vh, overlapping glass cards for risk analyzer and SOS trigger."
+    },
+    "operator_desk": {
+      "pattern": "High-Density Command Grid",
+      "details": "12-column grid. Left/Top navigation, center map spanning full height, right-side fixed action panel for incoming live SOS queue. Tight gaps ('gap-4')."
+    },
+    "campus_desk": {
+      "pattern": "Clean Management Layout",
+      "details": "List-heavy view with fixed left sidebar. Clear offline banner indicators and sync badges."
+    }
+  },
+  "components": {
+    "sos_button": "Hold-to-activate interaction. Use Framer Motion for a circular progress ring ('stroke-dashoffset') wrapping a glowing orange core. Add a heartbeat scale animation on hold.",
+    "risk_analyzer": "Floating glass panel over the map. Use Recharts or concentric rings colored by risk level (Teal/Orange/Red) for floods/landslides.",
+    "voice_assistant": "Floating action button in the bottom right with a pulsing ring animation when active.",
+    "offline_banners": "Fixed top banner, 'bg-amber-100 text-amber-900', subtle pulse. 'Synced' state turns briefly green before disappearing."
+  },
+  "motion": {
+    "interactions": "Hover states must explicitly change background and text color. Use 'whileTap' for buttons.",
+    "state_changes": "Use staggered entrance animations for the SOS queue to reduce cognitive load when multiple alerts arrive."
+  },
+  "accessibility": {
+    "contrast": "Red text on light backgrounds must be dark enough (e.g., Red-600) to pass WCAG AA.",
+    "testing": "All interactive and key informational elements MUST include a 'data-testid' attribute (e.g., 'data-testid=\"sos-trigger-btn\"')."
+  },
+  "media": {
+    "icons": "lucide-react",
+    "images": {
+      "topographic_pattern": "https://images.unsplash.com/photo-1759269834665-2b401eb4d6f4?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHwxfHx0b3BvZ3JhcGhpYyUyMG1hcCUyMHBhdHRlcm4lMjB3aGl0ZSUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzg1Mzc3MzYyfDA&ixlib=rb-4.1.0&q=85",
+      "operator_hero": "https://images.unsplash.com/photo-1766019463451-04e0b1269f37?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwzfHxjb250cm9sJTIwcm9vbSUyMG9wZXJhdG9ycyUyMGxvb2tpbmclMjBhdCUyMHNjcmVlbnN8ZW58MHx8fHwxNzg1Mzc3MzYxfDA&ixlib=rb-4.1.0&q=85"
+    }
+  },
+  "instructions_to_main_agent": [
+    "You have .js files, NOT .tsx files. Write all React code in .js using JSX syntax.",
+    "Use Shadcn UI components heavily but customize them to fit the clean, white-first, premium aesthetic. Do not use default Vercel look.",
+    "Do not use complete transparent background in header, overlays, or any surface that has content under it. Example: Dropdown MUST have 'bg-white' or 'bg-white/80 backdrop-blur-md'.",
+    "Implement 'data-testid' on ALL inputs, buttons, and status elements.",
+    "Build a single unified React application using React Router to separate Citizen, Operator, and Campus desks, with a shared Login/Onboarding screen.",
+    "Generate dummy/fallback data for Kerala and Tamil Nadu districts (shelters, hospitals, colleges).",
+    "Implement a Language Context/Provider to switch between EN, TA, and ML.",
+    "Add Recharts for the risk analyzer and Leaflet (react-leaflet) for the live map routing."
+  ],
+  "universal_guidelines_for_main_agent": [
+    "Create depth through layered design elements with z-index hierarchy. Do not make generic centered layouts.",
+    "Use 2-3x more spacing than feels comfortable.",
+    "Every interaction needs micro-animations.",
+    "Ensure pure white panels are separated by light slate borders or soft ambient shadows.",
+    "Make it look like a highly funded, deployment-ready emergency tech platform.",
+    "DO NOT apply universal transitions like 'transition: all'.",
+    "DO NOT center align the app container in App.css."
+  ]
+}
