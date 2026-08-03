@@ -10,6 +10,7 @@ import StatusBadge from '../shared/StatusBadge';
 import VoiceAssistant from '../shared/VoiceAssistant';
 import MobileBottomNav from '../shared/MobileBottomNav';
 import DamageAssessCard from '../shared/DamageAssessCard';
+import { subscribeCitizenPush, localNotify } from '../../lib/push';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
@@ -135,10 +136,25 @@ export default function CitizenPortal() {
 
   useEffect(() => {
     if (!activeSOS?.id) return;
+    const prevStatus = activeSOS.status;
     const id = setInterval(async () => {
-      try { const s = await api.getSOS(activeSOS.id); setActiveSOS(s); localStorage.setItem('ss_active_sos', JSON.stringify(s)); } catch (_) { void 0; }
+      try {
+        const s = await api.getSOS(activeSOS.id);
+        setActiveSOS(prev => {
+          if (prev && s.status && s.status !== prev.status) {
+            const msg = s.status === 'dispatched' ? { t: '🚨 Rescue team dispatched', b: `Help is on the way to ${s.district}` }
+              : s.status === 'acknowledged' ? { t: 'Operator acknowledged', b: 'A rescue team is being assembled.' }
+              : s.status === 'resolved' ? { t: 'SOS resolved', b: 'Your incident has been marked resolved.' }
+              : null;
+            if (msg) { localNotify(msg.t, msg.b, s.id); toast.success(msg.t); speak(msg.t); }
+          }
+          return s;
+        });
+        localStorage.setItem('ss_active_sos', JSON.stringify(s));
+      } catch { /* noop */ }
     }, 4000);
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSOS?.id]);
 
   useEffect(() => {
@@ -173,6 +189,10 @@ export default function CitizenPortal() {
       setActiveSOS(sos); localStorage.setItem('ss_active_sos', JSON.stringify(sos));
       toast.success(t('sos_sent'));
       speak(t('sos_sent'));
+      // Register for citizen push notifications tied to this SOS
+      subscribeCitizenPush(sos.id, profile.phone).then(sub => {
+        if (sub) toast.info('Push notifications enabled for this SOS');
+      });
     } catch (e) {
       toast.error('Failed. Queued locally.');
       enqueueOffline({ type: 'sos_create', payload });

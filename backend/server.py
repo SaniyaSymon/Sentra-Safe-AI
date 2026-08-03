@@ -504,10 +504,30 @@ async def update_sos(sos_id: str, update: SOSUpdate):
     upd = {k: v for k, v in update.model_dump().items() if v is not None}
     if not upd:
         raise HTTPException(400, "No fields to update")
+    # Fetch before to detect status transition
+    before = await db.sos_queue.find_one({"id": sos_id}, {"_id": 0, "status": 1, "phone": 1, "citizen_name": 1, "district": 1})
     res = await db.sos_queue.update_one({"id": sos_id}, {"$set": upd})
     if res.matched_count == 0:
         raise HTTPException(404, "SOS not found")
     doc = await db.sos_queue.find_one({"id": sos_id}, {"_id": 0})
+    # Push notify citizen on any status transition
+    new_status = upd.get("status")
+    if before and new_status and new_status != before.get("status"):
+        try:
+            title_map = {
+                "acknowledged": ("Operator has acknowledged your SOS", "A rescue team is being assembled."),
+                "dispatched": ("🚨 Rescue team dispatched", f"Help is on the way to {doc.get('district','your location')}."),
+                "resolved": ("SOS resolved", "Your incident has been marked resolved."),
+            }
+            title, body = title_map.get(new_status, ("SOS status updated", f"Status is now {new_status}."))
+            await _send_push_to_sos(sos_id, doc.get("phone"), title, body, extra={"sos_id": sos_id, "status": new_status})
+            n = Notification(target_role="citizen", target_entity_id=doc.get("phone"), related_sos_id=sos_id,
+                             message_title=title, message_body=body,
+                             notification_type="critical" if new_status == "dispatched" else "info",
+                             delivery_channel="web_push", delivery_status="sent")
+            await db.notifications.insert_one(n.model_dump())
+        except Exception:
+            logger.exception("push send failed")
     return doc
 
 
@@ -576,7 +596,7 @@ async def stats(state: Optional[str] = None, district: Optional[str] = None):
 
 @api_router.get("/risk-heatmap")
 async def risk_heatmap(state: Optional[str] = None):
-    """Compute per-district predictive risk score by fusing hazard zones (rainfall/slope) + recent SOS density."""
+    """Compute per-district predictive risk score by fusing hazard zones (rainfall/slope) + recent SOS density + live rainfall from Open-Meteo (cached 30min)."""
     from datetime import timedelta
     q = {}
     if state: q["state"] = state
@@ -609,18 +629,160 @@ async def risk_heatmap(state: Optional[str] = None):
                 "hazard_score": 0, "sos_count": 0
             }
         agg[key]["sos_count"] += 1
-    # Final score 0..10 = hazard_score*0.7 + min(sos_count*1.2, 3)
+    # Enrich with live rainfall from Open-Meteo (free, no key), cached 30min
+    await _enrich_with_live_rainfall(list(agg.values()))
+    # Final score 0..10 = hazard_score*0.55 + live_rainfall_impact*0.3 + sos_density*0.15
     out = []
     for rec in agg.values():
+        live_rain = rec.get("live_rainfall_mm", 0)
+        live_rain_score = min(10, live_rain / 20)  # 200mm ~= 10
         density = min(rec["sos_count"] * 1.2, 3)
-        score = round(min(10, rec["hazard_score"] * 0.7 + density), 1)
+        score = round(min(10, rec["hazard_score"] * 0.55 + live_rain_score * 0.30 + density * 0.15 * 3), 1)
         level = "severe" if score >= 8 else "high" if score >= 6 else "medium" if score >= 3.5 else "low"
         out.append({**rec, "risk_score": score, "risk_level": level, "hazard_types": sorted(set(rec["hazard_types"]))})
     out.sort(key=lambda x: -x["risk_score"])
     return out
 
 
+# ---- Live rainfall cache (Open-Meteo, 30min TTL) ----
+_RAIN_CACHE: Dict[str, Dict[str, Any]] = {}
+_RAIN_TTL_S = 1800
+
+async def _enrich_with_live_rainfall(records: List[Dict[str, Any]]):
+    import httpx, asyncio, time
+    now = time.time()
+    to_fetch = []
+    for r in records:
+        key = f"{round(r['latitude'],2)},{round(r['longitude'],2)}"
+        cached = _RAIN_CACHE.get(key)
+        if cached and now - cached["ts"] < _RAIN_TTL_S:
+            r["live_rainfall_mm"] = cached["rain"]
+            r["live_rain_source"] = "open-meteo (cached)"
+        else:
+            to_fetch.append((key, r))
+    if not to_fetch:
+        return
+    async with httpx.AsyncClient(timeout=8) as client:
+        async def fetch(key, r):
+            try:
+                resp = await client.get("https://api.open-meteo.com/v1/forecast", params={
+                    "latitude": r["latitude"], "longitude": r["longitude"],
+                    "hourly": "precipitation", "past_days": 1, "forecast_days": 2,
+                    "timezone": "Asia/Kolkata"
+                })
+                if resp.status_code != 200:
+                    r["live_rainfall_mm"] = 0
+                    r["live_rain_source"] = "unavailable"
+                    return
+                data = resp.json()
+                precip = data.get("hourly", {}).get("precipitation") or []
+                # Sum last 24h + next 24h projected
+                total = sum(float(x or 0) for x in precip[-48:]) if precip else 0
+                _RAIN_CACHE[key] = {"ts": now, "rain": total}
+                r["live_rainfall_mm"] = round(total, 1)
+                r["live_rain_source"] = "open-meteo"
+            except Exception:
+                r["live_rainfall_mm"] = 0
+                r["live_rain_source"] = "error"
+        await asyncio.gather(*[fetch(k, r) for k, r in to_fetch])
+
+
 app.include_router(api_router)
+
+
+# ================= WEB PUSH (VAPID) =================
+from py_vapid import Vapid01
+from pywebpush import webpush, WebPushException
+import base64 as _b64lib
+import json as _json_lib
+
+
+def _b64url(b: bytes) -> str:
+    return _b64lib.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def _ensure_vapid_keys():
+    """Load or generate VAPID keys; store PEM + public raw in /app/backend/.env (persistent)."""
+    env_path = ROOT_DIR / '.env'
+    pem_path = ROOT_DIR / 'vapid_private.pem'
+    pub_env = os.environ.get('VAPID_PUBLIC_KEY')
+    if pub_env and pem_path.exists():
+        v = Vapid01.from_file(str(pem_path))
+        return v, pub_env
+    v = Vapid01()
+    v.generate_keys()
+    v.save_key(str(pem_path))
+    # Extract raw uncompressed public key (65 bytes) and base64url-encode
+    pub_bytes = v.public_key.public_bytes(
+        encoding=__import__('cryptography').hazmat.primitives.serialization.Encoding.X962,
+        format=__import__('cryptography').hazmat.primitives.serialization.PublicFormat.UncompressedPoint,
+    )
+    pub_b64 = _b64url(pub_bytes)
+    # Persist to .env
+    existing = env_path.read_text() if env_path.exists() else ""
+    if 'VAPID_PUBLIC_KEY=' not in existing:
+        with open(env_path, 'a') as f:
+            f.write(f"\nVAPID_PUBLIC_KEY={pub_b64}\nVAPID_SUBJECT=mailto:symonsaniya@gmail.com\n")
+    os.environ['VAPID_PUBLIC_KEY'] = pub_b64
+    os.environ.setdefault('VAPID_SUBJECT', 'mailto:symonsaniya@gmail.com')
+    return v, pub_b64
+
+
+VAPID_INSTANCE, VAPID_PUBLIC_KEY = _ensure_vapid_keys()
+VAPID_PRIVATE_PEM = str(ROOT_DIR / 'vapid_private.pem')
+
+
+@app.get("/api/push/vapid-public-key")
+async def push_pub_key():
+    return {"public_key": VAPID_PUBLIC_KEY}
+
+
+class PushSub(BaseModel):
+    endpoint: str
+    keys: Dict[str, str]
+    phone: Optional[str] = None
+    sos_id: Optional[str] = None
+
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(sub: PushSub):
+    doc = {**sub.model_dump(), "created_at": now_iso()}
+    # Upsert by endpoint
+    await db.push_subscriptions.update_one({"endpoint": sub.endpoint}, {"$set": doc}, upsert=True)
+    return {"ok": True}
+
+
+async def _send_push_to_sos(sos_id: str, phone: Optional[str], title: str, body: str, extra: Optional[Dict[str, Any]] = None):
+    q = {"$or": []}
+    if sos_id: q["$or"].append({"sos_id": sos_id})
+    if phone: q["$or"].append({"phone": phone})
+    if not q["$or"]:
+        return 0
+    subs = await db.push_subscriptions.find(q, {"_id": 0}).to_list(50)
+    if not subs:
+        return 0
+    payload = _json_lib.dumps({"title": title, "body": body, **(extra or {})})
+    sent = 0
+    for s in subs:
+        try:
+            webpush(
+                subscription_info={"endpoint": s["endpoint"], "keys": s["keys"]},
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_PEM,
+                vapid_claims={"sub": os.environ.get('VAPID_SUBJECT', 'mailto:admin@sentrasafe.ai')},
+            )
+            sent += 1
+        except WebPushException as e:
+            # 410 gone → cleanup
+            if getattr(e.response, 'status_code', 0) in (404, 410):
+                await db.push_subscriptions.delete_one({"endpoint": s["endpoint"]})
+    return sent
+
+
+@app.post("/api/push/test/{sos_id}")
+async def push_test(sos_id: str):
+    n = await _send_push_to_sos(sos_id, None, "SentraSafe AI test", "This is a test push notification.")
+    return {"sent": n}
 
 
 # ================= AI DAMAGE ASSESSMENT =================

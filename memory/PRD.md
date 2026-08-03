@@ -91,3 +91,12 @@ Ready when you want to trigger it — I have your Supabase URL & anon key on fil
 - **Pending queue UX**: `ConnectionBadge` shows a bright orange counter with the queue length. `OfflineBanner` swaps between three states: offline (amber), pending-sync (orange with "Retry now" button), and just-synced (emerald flash).
 - **PWA service worker**: `/service-worker.js` registered from `index.js` for full offline app-shell caching. Read-heavy `/api/shelters|hospitals|colleges|hazards|campus-contacts|stats|risk-heatmap|damage-assessments|health` are network-first with cache fallback. Map tiles + logo are cache-first. Non-GET requests are never cached (mutations remain the source of truth).
 - **Serverless replay**: campus test dispatches, citizen SOS, and campus-contact CRUD all continue to work offline (queued) and self-heal on reconnect.
+
+## v1.6 Update (2026-08-03)
+- **Live rainfall feed (Open-Meteo)**: `/api/risk-heatmap` now fuses per-district live 48-hour precipitation from Open-Meteo (free, no key) with static hazard rules + SOS density. In-memory cache (30-min TTL) keeps the endpoint fast. Formula: `risk = hazard*0.55 + live_rain_score*0.3 + sos_density*0.15`.
+- **Citizen Push Notifications (Web Push + VAPID)**:
+  - Backend generates + persists VAPID keypair at startup (`/app/backend/vapid_private.pem`, public key in `.env`).
+  - `GET /api/push/vapid-public-key`, `POST /api/push/subscribe`, `POST /api/push/test/{sos_id}`.
+  - Service worker handles `push` and `notificationclick` events with vibrate + logo icon + tag by SOS id.
+  - Citizen portal auto-subscribes to Web Push right after firing SOS; polling loop also raises an in-app `localNotify` if the app is foreground.
+  - Operator PATCH `/api/sos/{id}` with `status=dispatched` (or acknowledged/resolved) sends push to every subscription tied to that `sos_id` or `phone`, and records a `notifications` row with `delivery_channel=web_push`.

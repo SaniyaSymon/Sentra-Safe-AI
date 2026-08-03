@@ -1,13 +1,7 @@
 /* SentraSafe AI — Service Worker
-   App-shell + runtime cache for offline PWA operation.
-   Strategy:
-   - App shell (HTML/JS/CSS): stale-while-revalidate
-   - GET API JSON (/api/*): network-first, fallback to cache
-   - Static images/logo: cache-first
-   - Fonts + tile images: cache-first with short TTL
-   - Never cache non-GET
+   App-shell + runtime cache + Web Push notifications.
 */
-const VERSION = 'v1.0.4';
+const VERSION = 'v1.1.0';
 const APP_CACHE = `ss-app-${VERSION}`;
 const API_CACHE = `ss-api-${VERSION}`;
 const IMG_CACHE = `ss-img-${VERSION}`;
@@ -55,23 +49,44 @@ async function cacheFirst(req, cacheName) {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET') return; // don't cache mutations
+  if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  // Reference read APIs → network-first
   if (url.pathname.startsWith('/api/')) {
-    // Only cache safe read-heavy endpoints
     if (/^(\/api\/(shelters|hospitals|colleges|hazards|campus-contacts|stats|risk-heatmap|damage-assessments|health))/.test(url.pathname)) {
       event.respondWith(networkFirst(req, API_CACHE));
     }
     return;
   }
-  // Images / tiles
   if (req.destination === 'image' || url.hostname.endsWith('tile.openstreetmap.org')) {
     event.respondWith(cacheFirst(req, IMG_CACHE));
     return;
   }
-  // App shell
   if (url.origin === self.location.origin) {
     event.respondWith(networkFirst(req, APP_CACHE));
   }
+});
+
+// -------- Web Push --------
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { data = { title: 'SentraSafe AI', body: event.data ? event.data.text() : '' }; }
+  const title = data.title || 'SentraSafe AI';
+  const opts = {
+    body: data.body || 'Emergency update',
+    icon: '/assets/sentrasafe-logo.jpeg',
+    badge: '/assets/sentrasafe-logo.jpeg',
+    tag: data.sos_id || 'sentrasafe',
+    renotify: true,
+    vibrate: [200, 100, 200, 100, 400],
+    data: data,
+  };
+  event.waitUntil(self.registration.showNotification(title, opts));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(self.clients.matchAll({ type: 'window' }).then(list => {
+    for (const c of list) { if ('focus' in c) return c.focus(); }
+    if (self.clients.openWindow) return self.clients.openWindow('/');
+  }));
 });
