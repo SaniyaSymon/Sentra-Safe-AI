@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { apiClient } from '../../lib/api';
+import { supabase, isSupabaseReady } from '../../lib/supabase';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { toast } from 'sonner';
@@ -31,12 +32,25 @@ export default function DamageAssessCard({ sosId, state, district, hazardType, l
       const dataUrl = reader.result;
       setPreview(dataUrl);
       setLoading(true); setResult(null);
+      // Best-effort parallel upload to Supabase Storage (mirror)
+      let mirrorUrl = null;
+      if (isSupabaseReady()) {
+        try {
+          const path = `${sosId || 'anon'}/${Date.now()}-${(file.name || 'photo').replace(/\s+/g, '_')}`;
+          const { data: up, error } = await supabase.storage.from('damage-photos').upload(path, file, { upsert: false });
+          if (!error && up) {
+            const { data: pub } = supabase.storage.from('damage-photos').getPublicUrl(up.path);
+            mirrorUrl = pub?.publicUrl || null;
+          }
+        } catch { /* bucket might not exist yet — ignore */ }
+      }
       try {
         const { data } = await apiClient.post('/damage-assess', {
           image_base64: dataUrl, sos_id: sosId, state, district, hazard_type: hazardType, language,
+          mirror_url: mirrorUrl,
         }, { timeout: 60000 });
-        setResult(data);
-        toast.success(`AI: ${data.severity_level || 'assessed'}`);
+        setResult({ ...data, mirror_url: mirrorUrl });
+        toast.success(`AI: ${data.severity_level || 'assessed'}${mirrorUrl ? ' • mirrored to Supabase' : ''}`);
       } catch (err) {
         toast.error(err?.response?.data?.detail || 'Assessment failed');
       } finally { setLoading(false); }

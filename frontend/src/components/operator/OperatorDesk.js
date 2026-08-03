@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { useDistrictResources } from '../../hooks/useRealtimeData';
 import { getDistrictCenter, STATES_DISTRICTS } from '../../data/districts';
 import { api } from '../../lib/api';
+import { supabase, isSupabaseReady, subscribeInserts } from '../../lib/supabase';
 import Header from '../shared/Header';
 import LiveMap from '../shared/LiveMap';
 import OfflineBanner from '../shared/OfflineBanner';
@@ -28,6 +29,25 @@ export default function OperatorDesk() {
 
   const { shelters, hospitals, colleges, hazards } = useDistrictResources(state, district === 'ALL' ? undefined : district);
   const districts = useMemo(() => ['ALL', ...(STATES_DISTRICTS[state] || [])], [state]);
+  const [realtime, setRealtime] = useState({ enabled: false, count: 0 });
+
+  useEffect(() => {
+    if (!isSupabaseReady()) return;
+    setRealtime({ enabled: true, count: 0 });
+    const unsub = subscribeInserts('sos_queue', null, (payload) => {
+      if (payload.eventType === 'INSERT' && payload.new) {
+        setSosList(list => {
+          if (list.some(s => s.id === payload.new.id)) return list;
+          return [payload.new, ...list];
+        });
+        setRealtime(r => ({ ...r, count: r.count + 1 }));
+        try { new Audio('data:audio/wav;base64,UklGRhwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=').play().catch(()=>{}); } catch {}
+      } else if (payload.eventType === 'UPDATE' && payload.new) {
+        setSosList(list => list.map(s => s.id === payload.new.id ? { ...s, ...payload.new } : s));
+      }
+    });
+    return () => unsub && unsub();
+  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -103,7 +123,13 @@ export default function OperatorDesk() {
               <SelectItem value="resolved">{t('resolved')}</SelectItem>
             </SelectContent>
           </Select>
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto flex gap-2 flex-wrap items-center">
+            {realtime.enabled && (
+              <div className="px-3 py-1.5 rounded-full text-xs font-semibold border bg-emerald-50 text-emerald-700 border-emerald-200 flex items-center gap-1.5" data-testid="realtime-badge">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Supabase Realtime {realtime.count > 0 ? `• ${realtime.count} pushed` : ''}
+              </div>
+            )}
             {[
               {k:'new', v: counts.new, c: 'text-red-700 bg-red-50 border-red-200', l: t('new')},
               {k:'ack', v: counts.ack, c: 'text-amber-800 bg-amber-50 border-amber-200', l: t('acknowledged')},
@@ -167,6 +193,14 @@ export default function OperatorDesk() {
                 </div>
                 {selected.details && <div className="mt-3 text-sm bg-slate-50 p-3 rounded-lg border border-slate-200"><b>Notes:</b> {selected.details}</div>}
                 {selected.medical_notes && <div className="mt-2 text-sm bg-red-50 p-3 rounded-lg border border-red-200"><b>Medical:</b> {selected.medical_notes}</div>}
+                {selected.photo_url && (
+                  <div className="mt-3 p-3 rounded-lg border border-orange-200 bg-orange-50" data-testid="incident-photo">
+                    <div className="text-xs font-semibold text-orange-800 mb-2">Damage Photo{selected.ai_severity != null ? ` • AI severity ${selected.ai_severity}/10 (${selected.ai_severity_level || ''})` : ''}</div>
+                    <img src={`${process.env.REACT_APP_BACKEND_URL}${selected.photo_url}`} alt="Damage" className="max-h-72 rounded-lg border border-slate-200 object-contain bg-white" />
+                    {selected.ai_description && <div className="text-xs text-slate-700 mt-2"><b>AI:</b> {selected.ai_description}</div>}
+                    {selected.ai_guidance_en && <div className="text-xs text-slate-700 mt-1"><b>Guidance:</b> {selected.ai_guidance_en}</div>}
+                  </div>
+                )}
 
                 <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
                   <Input placeholder="Assign team" value={team} onChange={e => setTeam(e.target.value)} className="bg-white" data-testid="op-team" />

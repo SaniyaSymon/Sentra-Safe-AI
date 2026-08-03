@@ -74,3 +74,8 @@ Ready when you want to trigger it — I have your Supabase URL & anon key on fil
 
 ## Twilio
 - Deferred (no credentials shared). Backend `/api/dispatch/test` remains mocked. Swap to Twilio requires adding `TWILIO_*` env vars and replacing the mock in `test_dispatch()`.
+
+## v1.3 Update (2026-08-03)
+- **Supabase Realtime cutover**: OperatorDesk now subscribes to `sos_queue` INSERT/UPDATE via `subscribeInserts` in `lib/supabase.js`. When Supabase env vars are set + SQL is run, new SOS pop instantly with a `Supabase Realtime` badge and push counter. Polling remains a fallback so both modes co-exist.
+- **Owner Admin Console** (`#/admin`): hidden route for `symonsaniya@gmail.com`. Owner button appears in header only when email matches. Console shows global stats (colleges, contacts, total/active SOS, AI assessments), searchable list of every college with per-contact role chips, all incidents (with damage photo thumb), and all AI assessments. Backend endpoint `GET /api/admin/overview` gated by `X-Owner-Email` header.
+- **Photo Attachment on Alerts**: `POST /api/damage-assess` now stores photo bytes + mime, exposes `GET /api/damage-photo/{id}` (5-6 KB JPEG), and back-fills `sos_queue.photo_url + ai_severity + ai_severity_level + ai_description + ai_guidance_en`. Operator incident detail renders the photo + AI summary. If Supabase env is live, the frontend uploads to `damage-photos` bucket in parallel and prefers the mirror URL.

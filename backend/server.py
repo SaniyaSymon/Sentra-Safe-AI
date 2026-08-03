@@ -142,6 +142,7 @@ class DamageAssessRequest(BaseModel):
     hazard_type: Optional[str] = "general"
     language: Optional[str] = "en"
     sos_id: Optional[str] = None
+    mirror_url: Optional[str] = None  # Supabase Storage URL (optional)
 
 
 class SOSCreate(BaseModel):
@@ -624,24 +625,76 @@ async def damage_assess(req: DamageAssessRequest):
         import json as _json, re
         m = re.search(r"\{.*\}", raw, re.S)
         data = _json.loads(m.group(0)) if m else {"severity_score": 5, "severity_level": "moderate", "hazard_type": req.hazard_type or "general", "damage_description": raw[:180], "guidance_en": "Move to higher ground and await rescue.", "guidance_ta": "உயரமான இடத்திற்கு நகர்ந்து மீட்பு குழுவை எதிர்பார்க்கவும்.", "guidance_ml": "ഉയർന്ന സ്ഥലത്തേക്ക് നീങ്ങി രക്ഷാ സംഘത്തെ കാത്തിരിക്കുക."}
-        # Store
+        # Detect mime from data url
+        mime = "image/jpeg"
+        if req.image_base64 and req.image_base64.startswith("data:"):
+            try:
+                mime = req.image_base64.split(";", 1)[0].split(":", 1)[1]
+            except Exception:
+                mime = "image/jpeg"
+        aid = str(uuid.uuid4())
+        photo_url = req.mirror_url or f"/api/damage-photo/{aid}"
         doc = {
-            "id": str(uuid.uuid4()),
+            "id": aid,
             "sos_id": req.sos_id,
             "created_at": now_iso(),
             "state": req.state, "district": req.district,
+            "photo_base64": b64,
+            "photo_mime": mime,
+            "photo_url": photo_url,
             **data,
         }
         await db.damage_assessments.insert_one(doc)
         if req.sos_id:
-            await db.sos_queue.update_one({"id": req.sos_id}, {"$set": {"ai_severity": data.get("severity_score"), "ai_hazard_type": data.get("hazard_type"), "ai_description": data.get("damage_description")}})
-        doc.pop("_id", None)
-        return doc
+            await db.sos_queue.update_one({"id": req.sos_id}, {"$set": {
+                "ai_severity": data.get("severity_score"),
+                "ai_severity_level": data.get("severity_level"),
+                "ai_hazard_type": data.get("hazard_type"),
+                "ai_description": data.get("damage_description"),
+                "ai_guidance_en": data.get("guidance_en"),
+                "photo_url": photo_url,
+            }})
+        # Strip photo_base64 from response to keep payload small
+        out = {k: v for k, v in doc.items() if k not in ("photo_base64", "_id")}
+        return out
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("damage_assess failed")
         raise HTTPException(500, f"Assessment failed: {str(e)[:200]}")
+
+
+from fastapi.responses import Response as FastResponse
+
+
+@app.get("/api/damage-photo/{assessment_id}")
+async def get_damage_photo(assessment_id: str):
+    doc = await db.damage_assessments.find_one({"id": assessment_id}, {"_id": 0, "photo_base64": 1, "photo_mime": 1})
+    if not doc or not doc.get("photo_base64"):
+        raise HTTPException(404, "Photo not found")
+    import base64 as _b64
+    data = _b64.b64decode(doc["photo_base64"])
+    return FastResponse(content=data, media_type=doc.get("photo_mime") or "image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/api/admin/overview")
+async def admin_overview(email: Optional[str] = Header(None, alias="X-Owner-Email"), state: Optional[str] = None):
+    if email != "symonsaniya@gmail.com":
+        raise HTTPException(403, "Owner only")
+    q = {}
+    if state: q["state"] = state
+    colleges = await db.colleges.find(q, {"_id": 0}).sort("state", 1).to_list(500)
+    contacts = await db.campus_contacts.find({}, {"_id": 0}).to_list(2000)
+    sos = await db.sos_queue.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    assessments = await db.damage_assessments.find({}, {"_id": 0, "photo_base64": 0}).sort("created_at", -1).to_list(500)
+    stats = {
+        "total_colleges": len(colleges),
+        "total_contacts": len(contacts),
+        "total_sos": len(sos),
+        "active_sos": len([s for s in sos if s.get("status") in ("new", "acknowledged", "dispatched")]),
+        "assessments": len(assessments),
+    }
+    return {"stats": stats, "colleges": colleges, "contacts": contacts, "sos": sos, "assessments": assessments}
 
 
 @app.get("/api/damage-assessments")
