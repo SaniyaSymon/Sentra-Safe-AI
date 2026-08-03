@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Query, Header
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -38,11 +38,13 @@ class UserProfile(BaseModel):
     role: str  # citizen | operator | campus
     full_name: str
     phone: Optional[str] = ""
+    email: Optional[str] = ""
     state: str
     district: str
     preferred_language: str = "en"
     family_size: Optional[int] = 1
     linked_campus_id: Optional[str] = None
+    campus_role: Optional[str] = None  # professor | ncc | security | coordinator | admin | medical
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -111,12 +113,35 @@ class CampusContact(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     college_id: str
     contact_name: str
-    role_type: str  # professor | ncc | security | coordinator
+    role_type: str  # professor | ncc | security | coordinator | admin | medical
     phone: str
     preferred_language: str = "en"
     can_receive_sms: bool = True
     can_receive_voice_call: bool = True
     is_primary: bool = False
+    is_active: bool = True
+    updated_at: str = Field(default_factory=now_iso)
+
+
+class CampusContactUpdate(BaseModel):
+    contact_name: Optional[str] = None
+    role_type: Optional[str] = None
+    phone: Optional[str] = None
+    preferred_language: Optional[str] = None
+    can_receive_sms: Optional[bool] = None
+    can_receive_voice_call: Optional[bool] = None
+    is_primary: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+
+class DamageAssessRequest(BaseModel):
+    image_base64: str  # data:image/...;base64,xxx OR raw base64
+    context: Optional[str] = ""
+    state: Optional[str] = ""
+    district: Optional[str] = ""
+    hazard_type: Optional[str] = "general"
+    language: Optional[str] = "en"
+    sos_id: Optional[str] = None
 
 
 class SOSCreate(BaseModel):
@@ -379,17 +404,54 @@ async def list_hazards(state: Optional[str] = None, district: Optional[str] = No
 
 
 @api_router.get("/campus-contacts")
-async def list_campus_contacts(college_id: Optional[str] = None):
+async def list_campus_contacts(college_id: Optional[str] = None, include_inactive: bool = False):
     q = {}
     if college_id: q["college_id"] = college_id
+    if not include_inactive: q["is_active"] = {"$ne": False}
     docs = await db.campus_contacts.find(q, {"_id": 0}).to_list(500)
     return docs
 
 
+def _require_campus_admin(actor_role: Optional[str]):
+    if actor_role not in ("coordinator", "admin"):
+        raise HTTPException(403, "Only campus coordinator or admin can modify contacts")
+
+
 @api_router.post("/campus-contacts", response_model=CampusContact)
-async def create_campus_contact(contact: CampusContact):
+async def create_campus_contact(contact: CampusContact, x_campus_role: Optional[str] = Header(None)):
+    _require_campus_admin(x_campus_role)
+    contact.updated_at = now_iso()
     await db.campus_contacts.insert_one(contact.model_dump())
     return contact
+
+
+@api_router.patch("/campus-contacts/{contact_id}")
+async def update_campus_contact(contact_id: str, update: CampusContactUpdate, x_campus_role: Optional[str] = Header(None)):
+    _require_campus_admin(x_campus_role)
+    upd = {k: v for k, v in update.model_dump().items() if v is not None}
+    if not upd:
+        raise HTTPException(400, "No fields to update")
+    upd["updated_at"] = now_iso()
+    res = await db.campus_contacts.update_one({"id": contact_id}, {"$set": upd})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Contact not found")
+    doc = await db.campus_contacts.find_one({"id": contact_id}, {"_id": 0})
+    return doc
+
+
+@api_router.delete("/campus-contacts/{contact_id}")
+async def delete_campus_contact(contact_id: str, hard: bool = False, x_campus_role: Optional[str] = Header(None)):
+    _require_campus_admin(x_campus_role)
+    if hard:
+        res = await db.campus_contacts.delete_one({"id": contact_id})
+        if res.deleted_count == 0:
+            raise HTTPException(404, "Contact not found")
+        return {"deleted": True}
+    # soft delete
+    res = await db.campus_contacts.update_one({"id": contact_id}, {"$set": {"is_active": False, "updated_at": now_iso()}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Contact not found")
+    return {"deactivated": True}
 
 
 # ---- SOS ----
@@ -512,6 +574,82 @@ async def stats(state: Optional[str] = None, district: Optional[str] = None):
 
 
 app.include_router(api_router)
+
+
+# ================= AI DAMAGE ASSESSMENT =================
+from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+
+
+def _extract_base64(s: str) -> str:
+    if not s:
+        return s
+    if s.startswith("data:") and "," in s:
+        return s.split(",", 1)[1]
+    return s
+
+
+@app.post("/api/damage-assess")
+async def damage_assess(req: DamageAssessRequest):
+    """Analyzes a disaster damage photo using Claude Sonnet 4.5 vision.
+    Returns {severity_score, severity_level, hazard_type, damage_description, guidance_{en,ta,ml}}.
+    """
+    key = os.environ.get("EMERGENT_LLM_KEY")
+    if not key:
+        raise HTTPException(500, "LLM key not configured")
+    b64 = _extract_base64(req.image_base64)
+    if not b64 or len(b64) < 100:
+        raise HTTPException(400, "Invalid image")
+    session_id = f"damage-{req.sos_id or uuid.uuid4().hex[:8]}"
+    system = (
+        "You are SentraSafe AI's disaster damage assessor for Kerala and Tamil Nadu, India. "
+        "Given a photo of a scene during a flood or landslide, assess severity strictly as JSON. "
+        "Return ONLY a compact JSON object with keys: severity_score (integer 0-10), "
+        "severity_level (one of: minimal, moderate, severe, critical), "
+        "hazard_type (flood|landslide|structural|medical|general), "
+        "damage_description (<= 40 words, factual), "
+        "guidance_en, guidance_ta, guidance_ml (each <= 30 words, safety-first actionable advice in English, Tamil, Malayalam). "
+        "No prose outside JSON."
+    )
+    prompt = (
+        f"Context: state={req.state or 'unknown'}, district={req.district or 'unknown'}, "
+        f"reported hazard={req.hazard_type or 'general'}, notes={req.context or 'none'}. "
+        "Assess the attached photo."
+    )
+    try:
+        chat = LlmChat(api_key=key, session_id=session_id, system_message=system).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        img = ImageContent(image_base64=b64)
+        response = await chat.send_message(UserMessage(text=prompt, file_contents=[img]))
+        # Response is the full text
+        raw = response if isinstance(response, str) else str(response)
+        import json as _json, re
+        m = re.search(r"\{.*\}", raw, re.S)
+        data = _json.loads(m.group(0)) if m else {"severity_score": 5, "severity_level": "moderate", "hazard_type": req.hazard_type or "general", "damage_description": raw[:180], "guidance_en": "Move to higher ground and await rescue.", "guidance_ta": "உயரமான இடத்திற்கு நகர்ந்து மீட்பு குழுவை எதிர்பார்க்கவும்.", "guidance_ml": "ഉയർന്ന സ്ഥലത്തേക്ക് നീങ്ങി രക്ഷാ സംഘത്തെ കാത്തിരിക്കുക."}
+        # Store
+        doc = {
+            "id": str(uuid.uuid4()),
+            "sos_id": req.sos_id,
+            "created_at": now_iso(),
+            "state": req.state, "district": req.district,
+            **data,
+        }
+        await db.damage_assessments.insert_one(doc)
+        if req.sos_id:
+            await db.sos_queue.update_one({"id": req.sos_id}, {"$set": {"ai_severity": data.get("severity_score"), "ai_hazard_type": data.get("hazard_type"), "ai_description": data.get("damage_description")}})
+        doc.pop("_id", None)
+        return doc
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("damage_assess failed")
+        raise HTTPException(500, f"Assessment failed: {str(e)[:200]}")
+
+
+@app.get("/api/damage-assessments")
+async def list_damage(sos_id: Optional[str] = None, limit: int = 50):
+    q = {}
+    if sos_id: q["sos_id"] = sos_id
+    docs = await db.damage_assessments.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return docs
 
 app.add_middleware(
     CORSMiddleware,

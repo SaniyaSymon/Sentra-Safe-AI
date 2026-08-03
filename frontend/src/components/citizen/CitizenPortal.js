@@ -9,6 +9,7 @@ import OfflineBanner from '../shared/OfflineBanner';
 import StatusBadge from '../shared/StatusBadge';
 import VoiceAssistant from '../shared/VoiceAssistant';
 import MobileBottomNav from '../shared/MobileBottomNav';
+import DamageAssessCard from '../shared/DamageAssessCard';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
@@ -353,6 +354,9 @@ export default function CitizenPortal() {
                   </div>
                 </div>
               </Card>
+            </div>
+            <div className="mt-4">
+              <DamageAssessCard sosId={activeSOS?.id} state={state} district={district} hazardType={sosDetails.hazard_type} language={language} />
             </div>
           </TabsContent>
 

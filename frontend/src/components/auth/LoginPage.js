@@ -22,9 +22,11 @@ export default function LoginPage() {
   const [state, setState] = useState('Tamil Nadu');
   const [district, setDistrict] = useState('Chennai');
   const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [familySize, setFamilySize] = useState(2);
   const [linkedCollegeId, setLinkedCollegeId] = useState('');
+  const [campusRole, setCampusRole] = useState('coordinator');
   const [colleges, setColleges] = useState([]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -48,9 +50,11 @@ export default function LoginPage() {
     const profile = {
       id: crypto.randomUUID(),
       role, full_name: fullName.trim(), phone: phone.trim(),
+      email: email.trim() || (role === 'campus' ? 'symonsaniya@gmail.com' : ''),
       state, district, preferred_language: language,
       family_size: role === 'citizen' ? Number(familySize) : 1,
       linked_campus_id: role === 'campus' ? linkedCollegeId : null,
+      campus_role: role === 'campus' ? campusRole : null,
       created_at: new Date().toISOString(),
     };
     try { await apiClient.post('/profiles', profile); } catch (_) { void 0; }
@@ -161,6 +165,28 @@ export default function LoginPage() {
                   </SelectContent>
                 </Select>
               </div>
+            )}
+            {role === 'campus' && (
+              <>
+                <div className="col-span-2">
+                  <Label>Campus Role</Label>
+                  <Select value={campusRole} onValueChange={setCampusRole}>
+                    <SelectTrigger data-testid="select-campus-role" className="bg-white"><SelectValue /></SelectTrigger>
+                    <SelectContent className="bg-white">
+                      <SelectItem value="professor">Professor</SelectItem>
+                      <SelectItem value="ncc">NCC Cadet</SelectItem>
+                      <SelectItem value="security">Security</SelectItem>
+                      <SelectItem value="coordinator">Coordinator (Admin CRUD)</SelectItem>
+                      <SelectItem value="admin">Campus Admin (Full CRUD)</SelectItem>
+                      <SelectItem value="medical">Medical Support</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="col-span-2">
+                  <Label>Email</Label>
+                  <Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@campus.edu" data-testid="input-email" className="bg-white" />
+                </div>
+              </>
             )}
           </div>
 

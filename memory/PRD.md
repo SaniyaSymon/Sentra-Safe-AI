@@ -56,3 +56,21 @@ User requested full Supabase migration (Auth + RLS + Realtime + Storage + Edge F
 - Replacing `axios → supabase-js`, hooks, realtime channels
 - Migration script for existing MongoDB data
 Ready when you want to trigger it — I have your Supabase URL & anon key on file.
+
+## v1.2 Update (2026-08-03)
+- **Campus Admin CRUD** — coordinator/admin roles can add/edit/deactivate/delete campus contacts via `/api/campus-contacts` (POST/PATCH/DELETE) gated by `x-campus-role` header; UI panel `Manage Contacts` on Campus Desk.
+- **AI Damage Assessment** — `POST /api/damage-assess` with base64 image → Claude Sonnet 4.5 vision returns `{severity_score 0-10, severity_level, hazard_type, damage_description, guidance_en/ta/ml}`. Auto-links to active SOS. UI: photo upload card in Citizen → SOS tab.
+- **Supabase Full-Migration Bundle** shipped in `/app/supabase/`:
+  - `schema.sql` — 12 tables + indexes + RLS policies + owner (`symonsaniya@gmail.com`) super-admin policy
+  - `seed.sql` — districts, colleges (incl. Nandha CoT & Nandha Engg Erode), shelters, hospitals, hazards, 6-role contact roster per college
+  - `README.md` — step-by-step setup
+  - `frontend/src/lib/supabase.js` — supabase-js client + realtime `subscribeInserts()` + storage `uploadDamagePhoto()` helpers
+- **LoginPage** — new campus-role selector (professor/ncc/security/coordinator/admin/medical) + email field; owner default `symonsaniya@gmail.com`.
+- **Frontend .env** — `REACT_APP_SUPABASE_URL` and `REACT_APP_SUPABASE_ANON_KEY` wired.
+
+## Supabase Migration Status
+- Deliverables: SQL schema + seed + supabase-js client + README (all committed under `/app/supabase/`).
+- Runtime: FastAPI + MongoDB remains the primary backend. Once user runs the SQL in Supabase Dashboard and enables realtime, the frontend can subscribe to `sos_queue` INSERTs via `subscribeInserts('sos_queue', null, cb)` in Operator Desk (see `/app/frontend/src/lib/supabase.js`). Full runtime cut-over from MongoDB to Supabase is a follow-up (touches 15+ files).
+
+## Twilio
+- Deferred (no credentials shared). Backend `/api/dispatch/test` remains mocked. Swap to Twilio requires adding `TWILIO_*` env vars and replacing the mock in `test_dispatch()`.

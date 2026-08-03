@@ -15,6 +15,7 @@ import { Label } from '../ui/label';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '../ui/alert-dialog';
 import { toast } from 'sonner';
 import { GraduationCap, Users, Phone, MessageSquare, PhoneCall, Siren, ShieldAlert, UserCircle2 } from 'lucide-react';
+import CampusContactManager from './CampusContactManager';
 
 const ROLE_META = {
   professor: { label: 'Professor', color: 'text-slate-700' },
@@ -60,24 +61,26 @@ export default function CampusDesk() {
   const { shelters, hospitals, hazards } = useDistrictResources(profile.state, profile.district);
   const center = useMemo(() => getDistrictCenter(profile.district), [profile.district]);
 
+  const loadAll = async () => {
+    try {
+      const [cols, cc, sos, notifs] = await Promise.all([
+        api.listColleges({ state: profile.state, district: profile.district }),
+        profile.linked_campus_id ? api.listCampusContacts({ college_id: profile.linked_campus_id }) : Promise.resolve([]),
+        profile.linked_campus_id ? api.listSOS({ college_id: profile.linked_campus_id }) : Promise.resolve([]),
+        api.listNotifications({ target_role: 'campus', target_entity_id: profile.linked_campus_id }),
+      ]);
+      setCollege(cols.find(c => c.id === profile.linked_campus_id) || cols[0] || null);
+      setContacts(cc);
+      setSosList(sos);
+      setNotifications(notifs);
+    } catch (_) { void 0; }
+  };
+
   useEffect(() => {
-    const load = async () => {
-      try {
-        const [cols, cc, sos, notifs] = await Promise.all([
-          api.listColleges({ state: profile.state, district: profile.district }),
-          profile.linked_campus_id ? api.listCampusContacts({ college_id: profile.linked_campus_id }) : Promise.resolve([]),
-          profile.linked_campus_id ? api.listSOS({ college_id: profile.linked_campus_id }) : Promise.resolve([]),
-          api.listNotifications({ target_role: 'campus', target_entity_id: profile.linked_campus_id }),
-        ]);
-        setCollege(cols.find(c => c.id === profile.linked_campus_id) || cols[0] || null);
-        setContacts(cc);
-        setSosList(sos);
-        setNotifications(notifs);
-      } catch (_) { void 0; }
-    };
-    load();
-    const id = setInterval(load, 4000);
+    loadAll();
+    const id = setInterval(loadAll, 4000);
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile.linked_campus_id, profile.state, profile.district]);
 
   const sendTest = async (channel, critical = false, phone = null) => {
@@ -141,6 +144,8 @@ export default function CampusDesk() {
               ))}
             </div>
           </Card>
+
+          <CampusContactManager collegeId={profile.linked_campus_id} contacts={contacts} onChanged={loadAll} />
 
           <Card className="p-5 border-slate-200 bg-white" data-testid="test-panel">
             <div className="flex items-center gap-2 mb-3"><ShieldAlert className="w-5 h-5 text-orange-600" /><h3 className="font-display font-bold">Test & Escalate</h3></div>
