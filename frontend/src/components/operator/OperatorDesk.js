@@ -30,6 +30,29 @@ export default function OperatorDesk() {
   const { shelters, hospitals, colleges, hazards } = useDistrictResources(state, district === 'ALL' ? undefined : district);
   const districts = useMemo(() => ['ALL', ...(STATES_DISTRICTS[state] || [])], [state]);
   const [realtime, setRealtime] = useState({ enabled: false, count: 0 });
+  const [riskDistricts, setRiskDistricts] = useState([]);
+  const [showHeatmap, setShowHeatmap] = useState(true);
+  const [selectedPhotos, setSelectedPhotos] = useState([]);
+  const [photoIndex, setPhotoIndex] = useState(0);
+
+  useEffect(() => {
+    const load = async () => { try { const r = await api.riskHeatmap(state === 'ALL' ? {} : { state }); setRiskDistricts(r || []); } catch { /* noop */ } };
+    load();
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
+  }, [state]);
+
+  useEffect(() => {
+    if (!selected?.id) { setSelectedPhotos([]); return; }
+    let stopped = false;
+    (async () => {
+      try {
+        const a = await api.damageAssessments({ sos_id: selected.id });
+        if (!stopped) { setSelectedPhotos(a || []); setPhotoIndex(0); }
+      } catch { /* noop */ }
+    })();
+    return () => { stopped = true; };
+  }, [selected?.id]);
 
   useEffect(() => {
     if (!isSupabaseReady()) return;
@@ -195,8 +218,33 @@ export default function OperatorDesk() {
                 {selected.medical_notes && <div className="mt-2 text-sm bg-red-50 p-3 rounded-lg border border-red-200"><b>Medical:</b> {selected.medical_notes}</div>}
                 {selected.photo_url && (
                   <div className="mt-3 p-3 rounded-lg border border-orange-200 bg-orange-50" data-testid="incident-photo">
-                    <div className="text-xs font-semibold text-orange-800 mb-2">Damage Photo{selected.ai_severity != null ? ` • AI severity ${selected.ai_severity}/10 (${selected.ai_severity_level || ''})` : ''}</div>
-                    <img src={`${process.env.REACT_APP_BACKEND_URL}${selected.photo_url}`} alt="Damage" className="max-h-72 rounded-lg border border-slate-200 object-contain bg-white" />
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs font-semibold text-orange-800">Damage Photos {selectedPhotos.length > 1 ? `(${photoIndex + 1}/${selectedPhotos.length})` : ''}{selected.ai_severity != null ? ` • AI severity ${selected.ai_severity}/10 (${selected.ai_severity_level || ''})` : ''}</div>
+                      {selectedPhotos.length > 1 && (
+                        <div className="flex gap-1">
+                          <button onClick={() => setPhotoIndex(i => (i - 1 + selectedPhotos.length) % selectedPhotos.length)} className="w-7 h-7 rounded-full bg-white border border-orange-200 text-orange-700 text-xs font-bold hover:bg-orange-100" data-testid="photo-prev">‹</button>
+                          <button onClick={() => setPhotoIndex(i => (i + 1) % selectedPhotos.length)} className="w-7 h-7 rounded-full bg-white border border-orange-200 text-orange-700 text-xs font-bold hover:bg-orange-100" data-testid="photo-next">›</button>
+                        </div>
+                      )}
+                    </div>
+                    {(() => {
+                      const active = selectedPhotos[photoIndex] || null;
+                      const src = active?.photo_url || selected.photo_url;
+                      const url = src?.startsWith('http') ? src : `${process.env.REACT_APP_BACKEND_URL}${src}`;
+                      return <img src={url} alt="Damage" className="max-h-72 w-full rounded-lg border border-slate-200 object-contain bg-white" />;
+                    })()}
+                    {selectedPhotos.length > 1 && (
+                      <div className="mt-2 flex gap-1.5 overflow-x-auto" data-testid="photo-strip">
+                        {selectedPhotos.map((p, i) => {
+                          const s = p.photo_url?.startsWith('http') ? p.photo_url : `${process.env.REACT_APP_BACKEND_URL}${p.photo_url}`;
+                          return (
+                            <button key={p.id} onClick={() => setPhotoIndex(i)} className={`shrink-0 w-14 h-14 rounded-lg overflow-hidden border-2 ${i === photoIndex ? 'border-orange-600' : 'border-slate-200'}`} data-testid={`photo-thumb-${i}`}>
+                              <img src={s} alt="" className="w-full h-full object-cover" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     {selected.ai_description && <div className="text-xs text-slate-700 mt-2"><b>AI:</b> {selected.ai_description}</div>}
                     {selected.ai_guidance_en && <div className="text-xs text-slate-700 mt-1"><b>Guidance:</b> {selected.ai_guidance_en}</div>}
                   </div>

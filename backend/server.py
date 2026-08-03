@@ -574,6 +574,52 @@ async def stats(state: Optional[str] = None, district: Optional[str] = None):
     return {"shelters": shelters, "hospitals": hospitals, "colleges": colleges, "hazards": hazards, "active_sos": active_sos}
 
 
+@api_router.get("/risk-heatmap")
+async def risk_heatmap(state: Optional[str] = None):
+    """Compute per-district predictive risk score by fusing hazard zones (rainfall/slope) + recent SOS density."""
+    from datetime import timedelta
+    q = {}
+    if state: q["state"] = state
+    hazards = await db.hazard_zones.find(q, {"_id": 0}).to_list(500)
+    since = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+    sos_recent = await db.sos_queue.find({**q, "created_at": {"$gte": since}}, {"_id": 0}).to_list(2000)
+    # Aggregate per (state, district)
+    agg: Dict[tuple, Dict[str, Any]] = {}
+    LEVEL_SCORE = {"low": 2, "medium": 5, "high": 7, "severe": 10}
+    for h in hazards:
+        key = (h["state"], h["district"])
+        rec = agg.setdefault(key, {
+            "state": h["state"], "district": h["district"],
+            "latitude": h["latitude"], "longitude": h["longitude"],
+            "rainfall_mm": 0, "slope_movement_mm": 0, "hazard_types": [],
+            "hazard_score": 0, "sos_count": 0
+        })
+        rj = h.get("rules_json") or {}
+        rec["rainfall_mm"] = max(rec["rainfall_mm"], int(rj.get("rainfall_mm", 0) or 0))
+        rec["slope_movement_mm"] = max(rec["slope_movement_mm"], int(rj.get("slope_movement_mm", 0) or 0))
+        rec["hazard_types"].append(h["hazard_type"])
+        rec["hazard_score"] = max(rec["hazard_score"], LEVEL_SCORE.get(h["risk_level"], 3))
+    for s in sos_recent:
+        key = (s.get("state"), s.get("district"))
+        if key not in agg:
+            agg[key] = {
+                "state": s.get("state"), "district": s.get("district"),
+                "latitude": s.get("latitude"), "longitude": s.get("longitude"),
+                "rainfall_mm": 0, "slope_movement_mm": 0, "hazard_types": [],
+                "hazard_score": 0, "sos_count": 0
+            }
+        agg[key]["sos_count"] += 1
+    # Final score 0..10 = hazard_score*0.7 + min(sos_count*1.2, 3)
+    out = []
+    for rec in agg.values():
+        density = min(rec["sos_count"] * 1.2, 3)
+        score = round(min(10, rec["hazard_score"] * 0.7 + density), 1)
+        level = "severe" if score >= 8 else "high" if score >= 6 else "medium" if score >= 3.5 else "low"
+        out.append({**rec, "risk_score": score, "risk_level": level, "hazard_types": sorted(set(rec["hazard_types"]))})
+    out.sort(key=lambda x: -x["risk_score"])
+    return out
+
+
 app.include_router(api_router)
 
 

@@ -34,7 +34,7 @@ function Recenter({ center }) {
 export default function LiveMap({
   center = [11.0, 78.0],
   userLocation,
-  shelters = [], hospitals = [], colleges = [], hazards = [], incidents = [],
+  shelters = [], hospitals = [], colleges = [], hazards = [], incidents = [], riskDistricts = [],
   routeTo = null,
   onSelectResource,
   height = '480px',
@@ -49,6 +49,8 @@ export default function LiveMap({
     }
   }, [routeTo, userLocation]);
 
+  const riskColor = (score) => score >= 8 ? '#DC2626' : score >= 6 ? '#F97316' : score >= 3.5 ? '#F59E0B' : '#10B981';
+
   return (
     <div style={{ height }} className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm" data-testid="live-map">
       <MapContainer center={center} zoom={11} style={{ height: '100%', width: '100%' }} scrollWheelZoom>
@@ -57,6 +59,18 @@ export default function LiveMap({
           attribution='&copy; OpenStreetMap contributors'
         />
         <Recenter center={center} />
+        {riskDistricts.map((r, i) => (
+          <CircleMarker key={`risk-${i}`} center={[r.latitude, r.longitude]}
+            radius={12 + r.risk_score * 3}
+            pathOptions={{ color: riskColor(r.risk_score), fillColor: riskColor(r.risk_score), fillOpacity: 0.18, weight: 1 }}>
+            <Popup>
+              <b>{r.district}, {r.state}</b><br/>
+              Risk score: <b>{r.risk_score}/10</b> ({r.risk_level})<br/>
+              Rainfall: {r.rainfall_mm} mm • Slope: {r.slope_movement_mm} mm<br/>
+              Hazards: {r.hazard_types.join(', ') || 'n/a'} • SOS(48h): {r.sos_count}
+            </Popup>
+          </CircleMarker>
+        ))}
         {userLocation && (
           <Marker position={userLocation} icon={ICONS.citizen}><Popup>Your location</Popup></Marker>
         )}

@@ -18,5 +18,7 @@ export const api = {
   listNotifications: (params) => apiClient.get('/notifications', { params }).then(r => r.data),
   testDispatch: (payload) => apiClient.post('/dispatch/test', payload).then(r => r.data),
   stats: (params) => apiClient.get('/stats', { params }).then(r => r.data),
+  riskHeatmap: (params) => apiClient.get('/risk-heatmap', { params }).then(r => r.data),
+  damageAssessments: (params) => apiClient.get('/damage-assessments', { params }).then(r => r.data),
   health: () => apiClient.get('/health').then(r => r.data),
 };

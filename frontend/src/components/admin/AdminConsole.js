@@ -148,13 +148,18 @@ export default function AdminConsole({ onBack }) {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {(data.assessments || []).map(a => (
                 <Card key={a.id} className="p-3 border-slate-200 bg-white" data-testid={`admin-ai-${a.id}`}>
-                  {a.photo_url && <img src={`${process.env.REACT_APP_BACKEND_URL}${a.photo_url}`} alt="damage" className="w-full h-40 rounded-lg object-cover border border-slate-200 mb-2" />}
+                  {a.photo_url && <img src={a.photo_url.startsWith('http') ? a.photo_url : `${process.env.REACT_APP_BACKEND_URL}${a.photo_url}`} alt="damage" className="w-full h-40 rounded-lg object-cover border border-slate-200 mb-2" />}
                   <div className="flex items-center justify-between mb-1">
                     <div className="font-display font-bold text-slate-900">{(a.severity_level || 'assessed').toUpperCase()}</div>
                     <div className="text-sm font-semibold">{a.severity_score ?? '—'}/10</div>
                   </div>
                   <div className="text-xs text-slate-500 mb-1">{a.state} • {a.district} • {a.hazard_type}</div>
-                  <div className="text-xs text-slate-700 line-clamp-3">{a.damage_description}</div>
+                  <div className="text-xs text-slate-700 line-clamp-3 mb-2">{a.damage_description}</div>
+                  <div className="space-y-1 text-[11px] border-t border-slate-100 pt-2">
+                    {a.guidance_en && <div><span className="font-bold text-slate-600">EN:</span> <span className="text-slate-700">{a.guidance_en}</span></div>}
+                    {a.guidance_ta && <div><span className="font-bold text-orange-700">TA:</span> <span className="text-slate-700">{a.guidance_ta}</span></div>}
+                    {a.guidance_ml && <div><span className="font-bold text-teal-700">ML:</span> <span className="text-slate-700">{a.guidance_ml}</span></div>}
+                  </div>
                 </Card>
               ))}
               {(data.assessments || []).length === 0 && <div className="text-sm text-slate-500 p-4 bg-white border border-dashed border-slate-200 rounded-xl">No AI assessments yet.</div>}
