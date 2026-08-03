@@ -79,3 +79,15 @@ Ready when you want to trigger it — I have your Supabase URL & anon key on fil
 - **Supabase Realtime cutover**: OperatorDesk now subscribes to `sos_queue` INSERT/UPDATE via `subscribeInserts` in `lib/supabase.js`. When Supabase env vars are set + SQL is run, new SOS pop instantly with a `Supabase Realtime` badge and push counter. Polling remains a fallback so both modes co-exist.
 - **Owner Admin Console** (`#/admin`): hidden route for `symonsaniya@gmail.com`. Owner button appears in header only when email matches. Console shows global stats (colleges, contacts, total/active SOS, AI assessments), searchable list of every college with per-contact role chips, all incidents (with damage photo thumb), and all AI assessments. Backend endpoint `GET /api/admin/overview` gated by `X-Owner-Email` header.
 - **Photo Attachment on Alerts**: `POST /api/damage-assess` now stores photo bytes + mime, exposes `GET /api/damage-photo/{id}` (5-6 KB JPEG), and back-fills `sos_queue.photo_url + ai_severity + ai_severity_level + ai_description + ai_guidance_en`. Operator incident detail renders the photo + AI summary. If Supabase env is live, the frontend uploads to `damage-photos` bucket in parallel and prefers the mirror URL.
+
+## v1.4 Update (2026-08-03)
+- **Predictive Risk Heatmap**: `GET /api/risk-heatmap?state=` fuses hazard-zone rainfall + slope + risk_level + 48-hour SOS density → per-district `risk_score (0-10)` + `risk_level`. Operator Desk map now renders scaled colored circles (green/amber/orange/red) at each district center, plus a toggle button (`Risk Heatmap: ON`) and a "Top: <district> (score)" pill. Test: Wayanad = 7.0/high, Nilgiris = severe.
+- **Incident Photo Gallery**: Operator detail panel loads `/api/damage-assessments?sos_id=X` and shows ‹/› arrows, thumbnail strip, and swappable main image. Multiple citizen updates on the same SOS build the gallery.
+- **Trilingual Admin Console**: Assessments tab now shows EN/TA/ML guidance blocks color-tagged for each AI assessment.
+- **Twilio deferred (no credentials)** — mocked dispatcher remains.
+
+## v1.5 Update (2026-08-03) — Offline Mode
+- **Auto-sync on reconnect**: AppContext now replays every queued action (`sos_create`, `dispatch`, `contact_create`, `contact_update`, `sos_update`) whenever `navigator.onLine` fires. Failed replays stay in queue for retry.
+- **Pending queue UX**: `ConnectionBadge` shows a bright orange counter with the queue length. `OfflineBanner` swaps between three states: offline (amber), pending-sync (orange with "Retry now" button), and just-synced (emerald flash).
+- **PWA service worker**: `/service-worker.js` registered from `index.js` for full offline app-shell caching. Read-heavy `/api/shelters|hospitals|colleges|hazards|campus-contacts|stats|risk-heatmap|damage-assessments|health` are network-first with cache fallback. Map tiles + logo are cache-first. Non-GET requests are never cached (mutations remain the source of truth).
+- **Serverless replay**: campus test dispatches, citizen SOS, and campus-contact CRUD all continue to work offline (queued) and self-heal on reconnect.

@@ -192,12 +192,25 @@ export default function OperatorDesk() {
           </Card>
 
           {/* Map + Detail */}
-          <div className="col-span-12 lg:col-span-8 space-y-4">
-            <Card className="p-0 overflow-hidden border-slate-200">
-              <LiveMap center={center} userLocation={selected ? [selected.latitude, selected.longitude] : null}
-                shelters={shelters} hospitals={hospitals} colleges={colleges} hazards={hazards} incidents={sosList} height="380px" />
-            </Card>
+          <Card className="col-span-12 lg:col-span-8 p-0 border-slate-200 relative overflow-hidden" data-testid="operator-map-card">
+            <div className="absolute top-3 left-3 z-[500] flex gap-2">
+              <button onClick={() => setShowHeatmap(v => !v)} className={`text-xs px-3 py-1.5 rounded-full border font-semibold shadow-sm ${showHeatmap ? 'bg-orange-600 text-white border-orange-700' : 'bg-white text-slate-700 border-slate-200'}`} data-testid="toggle-heatmap">
+                {showHeatmap ? 'Risk Heatmap: ON' : 'Risk Heatmap: OFF'}
+              </button>
+              {riskDistricts.length > 0 && showHeatmap && (
+                <div className="text-xs px-3 py-1.5 rounded-full bg-white/90 backdrop-blur-md border border-slate-200 text-slate-700 shadow-sm">
+                  <span className="font-semibold">Top:</span> {riskDistricts[0].district} ({riskDistricts[0].risk_score}/10)
+                </div>
+              )}
+            </div>
+            <LiveMap center={center} userLocation={selected ? [selected.latitude, selected.longitude] : null}
+              shelters={shelters} hospitals={hospitals} colleges={colleges} hazards={hazards} incidents={sosList}
+              riskDistricts={showHeatmap ? riskDistricts : []}
+              height="380px" />
+          </Card>
 
+          {/* Detail panel wrapped below */}
+          <div className="col-span-12 lg:col-span-8 space-y-4">
             {selected ? (
               <Card className="p-5 border-slate-200 bg-white" data-testid="sos-detail-panel">
                 <div className="flex items-start justify-between gap-4 flex-wrap">
